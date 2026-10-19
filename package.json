@@ -27,8 +27,6 @@
     "format": "prettier --write src functions/src tests scripts docs *.json *.ts README.md"
   },
   "dependencies": {
-    "@fontsource/zen-kaku-gothic-new": "^5.3.1",
-    "@fontsource/zen-old-mincho": "^5.3.1",
     "firebase": "^12.4.0",
     "lucide-react": "^0.468.0",
     "react": "^19.2.0",
