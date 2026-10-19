@@ -1,0 +1,8 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public reads and all business writes go through validated Cloud Functions.
+    // Client SDKs never get access to customer details, pricing writes or counters.
+    match /{document=**} { allow read, write: if false; }
+  }
+}
