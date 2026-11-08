@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { ArrowRight, ArrowLeft, Check, ShieldCheck, Mail, RefreshCw } from 'lucide-react';
+import { ArrowRight, ArrowLeft, Check, Mail, RefreshCw } from 'lucide-react';
 import { EventSummary, LoadState, useEvents } from './components/Events';
 import { Breadcrumb, PageHeading, NotFound } from './pages';
-import { api, isDemo } from './lib';
+import { api, isDemo, registrationsOpen } from './lib';
 import { yen, type Gender } from './types';
 interface Applicant {
   name: string;
@@ -47,7 +47,7 @@ export function ApplyPage() {
     setStep('review');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
-  const pay = async () => {
+  const register = async () => {
     if (!e || busy) return;
     setBusy(true);
     setError('');
@@ -67,7 +67,7 @@ export function ApplyPage() {
         b.toString(16).padStart(2, '0'),
       ).join('');
       if (signature !== payloadRef.current) {
-        const saved = sessionStorage.getItem(`kagomeet-checkout-${e.id}`);
+        const saved = sessionStorage.getItem(`kagomeet-registration-${e.id}`);
         let prior;
         try {
           prior = saved ? JSON.parse(saved) : null;
@@ -77,23 +77,20 @@ export function ApplyPage() {
         key.current = prior?.signature === signature ? prior.key : crypto.randomUUID();
         payloadRef.current = signature;
         sessionStorage.setItem(
-          `kagomeet-checkout-${e.id}`,
+          `kagomeet-registration-${e.id}`,
           JSON.stringify({ signature, key: key.current }),
         );
       }
-      const result = await api<{ url: string; bookingId: string; token: string }>('/checkout', {
+      const result = await api<{ bookingId: string; token: string }>('/bookings', {
         method: 'POST',
         body: JSON.stringify({ ...payload, idempotencyKey: key.current }),
       });
-      // Do not retain personal input in browser storage after redirecting to Stripe.
-      sessionStorage.removeItem(`kagomeet-checkout-${e.id}`);
+      sessionStorage.removeItem(`kagomeet-registration-${e.id}`);
       sessionStorage.setItem(
         'kagomeet-booking',
         JSON.stringify({ bookingId: result.bookingId, token: result.token }),
       );
-      const url = new URL(result.url);
-      if (url.hostname !== 'checkout.stripe.com') throw new Error('決済先の確認に失敗しました');
-      window.location.assign(url.toString());
+      window.location.assign(`/complete?booking=${result.bookingId}&token=${result.token}`);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -107,6 +104,7 @@ export function ApplyPage() {
       </div>
     );
   if (!e) return <NotFound />;
+  if (!registrationsOpen) return <div className="page-container narrow"><div className="empty-state">参加申し込みは受付開始前です。開催情報をご確認のうえ、受付開始をお待ちください。</div><Link className="button dark" to={`/events/${e.id}`}>イベント詳細に戻る</Link></div>;
   if (step === 'demo')
     return (
       <div className="page-container narrow">
@@ -119,14 +117,10 @@ export function ApplyPage() {
           <p>
             これはデモの確認画面です。
             <br />
-            <strong>実際の予約・決済・メール送信は行っていません。</strong>
+            <strong>実際の予約・集金・メール送信は行っていません。</strong>
           </p>
           <EventSummary event={e} />
-          <p>
-            本番ではこのあとStripeの決済画面へ移動し、
-            <br />
-            決済通知を受信した時点で参加が確定します。
-          </p>
+          <p>実際の受付では、申し込み完了後に受付番号を表示します。参加費は当日会場でお支払いください。</p>
           <Link className="button dark" to="/events">
             イベント一覧へ
             <ArrowRight size={18} />
@@ -152,7 +146,7 @@ export function ApplyPage() {
           <span>2</span>内容確認
         </li>
         <li>
-          <span>3</span>お支払い
+          <span>3</span>申込完了
         </li>
       </ol>
       <EventSummary event={e} />
@@ -239,7 +233,7 @@ export function ApplyPage() {
               onChange={(v) => update('email', v.target.value)}
               placeholder="example@email.com"
             />
-            <small>申し込み確認と当日のご案内をお送りします。</small>
+            <small>運営からイベントについて連絡する場合に使用します。</small>
           </label>
           <label>
             電話番号 <i>*</i>
@@ -263,10 +257,8 @@ export function ApplyPage() {
             <small>イベントに関する緊急時のご連絡に使用します。</small>
           </label>
           <div className="policy-summary">
-            <h3>キャンセルについて</h3>
-            <p>
-              開催日時の7日前の同時刻までは全額返金。それ以降の参加者都合のキャンセルは返金対象外です。運営都合の中止は全額返金します。
-            </p>
+            <h3>お支払いとキャンセル</h3>
+            <p>参加費は当日会場でお支払いください。開催2時間前までは申込完了画面からキャンセルできます。</p>
           </div>
           <label className="checkbox-label">
             <input
@@ -317,17 +309,17 @@ export function ApplyPage() {
           </dl>
           <div className="total-price">
             <span>
-              お支払い金額 <small>（税込）</small>
+              会場でのお支払い <small>（税込）</small>
             </span>
             <strong>{yen(form.gender === 'male' ? e.malePrice : e.femalePrice)}</strong>
           </div>
           <p className="notice">
             {isDemo
-              ? 'デモモードです。実際の決済は行わず、確認画面を表示します。'
-              : 'Stripeの決済画面へ移動します。カード決済の完了を確認した時点で参加が確定します。'}
+              ? 'デモモードです。実際の申し込みは行わず、確認画面を表示します。'
+              : '申し込みを確定します。参加費のお支払いは当日会場です。'}
           </p>
-          <button className="button coral wide" onClick={pay} disabled={busy}>
-            {busy ? '決済画面を準備しています…' : isDemo ? 'デモの確認画面へ' : '決済画面へ進む'}
+          <button className="button coral wide" onClick={register} disabled={busy}>
+            {busy ? '申し込みを受け付けています…' : isDemo ? 'デモの確認画面へ' : '申し込みを確定する'}
             <ArrowRight size={18} />
           </button>
           <button
@@ -341,10 +333,7 @@ export function ApplyPage() {
             <ArrowLeft size={16} />
             入力内容を修正する
           </button>
-          <p className="payment-note">
-            <ShieldCheck size={15} />
-            カード情報はKAGOMEETに保存されません。
-          </p>
+          <p className="payment-note">受付番号は申込完了画面に表示されます。画面を保存して当日ご提示ください。</p>
         </section>
       )}
     </div>
@@ -354,27 +343,26 @@ interface Status {
   id: string;
   eventId: string;
   eventTitle: string;
-  status: 'holding' | 'paid' | 'expired' | 'refunded';
+  status: 'confirmed' | 'cancelled';
   amount: number;
-  refundedAmount: number;
-  expiresAt: number;
+  received: boolean;
+  checkedIn: boolean;
 }
 export function CompletePage() {
-  const [resuming, setResuming] = useState(false);
   const [params] = useSearchParams(),
     [booking, setBooking] = useState<Status | null>(null),
     [error, setError] = useState(''),
+    [cancelling, setCancelling] = useState(false),
     [attempt, setAttempt] = useState(0);
-  const id = params.get('booking'),
-    token = params.get('token');
+  const stored = (() => { try { return JSON.parse(sessionStorage.getItem('kagomeet-booking') || '{}'); } catch { return {}; } })();
+  const id = params.get('booking') || stored.bookingId,
+    token = params.get('token') || stored.token;
   useEffect(() => {
     if (!id || !token) {
-      setError('確認用の情報が見つかりません。確認メールのリンクから開いてください。');
+      setError('確認用の情報が見つかりません。申込完了時の画面をご確認ください。');
       return;
     }
     let active = true;
-    let timer: ReturnType<typeof setTimeout>;
-    let count = 0;
     const load = async () => {
       try {
         const b = await api<Status>('/booking/status', {
@@ -384,43 +372,30 @@ export function CompletePage() {
         if (!active) return;
         setBooking(b);
         setError('');
-        if (b.status === 'holding' && ++count < 18) timer = setTimeout(load, 5000);
       } catch (err) {
         if (active) setError((err as Error).message);
       }
     };
     load();
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
+    return () => { active = false; };
   }, [id, token, attempt]);
-  const messages = {
-    holding: [
-      '決済状況を確認しています。',
-      '決済済みの場合は、反映まで少しお待ちください。画面を閉じても、確認が取れ次第メールでご案内します。',
-    ],
-    paid: [
-      'お申し込みが確定しました。',
-      'ご参加ありがとうございます。確認メールをお送りします。当日は公的な身分証をお持ちください。',
-    ],
-    expired: [
-      'お申し込みの受付時間が終了しました。',
-      'お支払いは確定していません。ご希望の場合は、イベントページから改めてお申し込みください。',
-    ],
-    refunded: [
-      'キャンセル・返金を受け付けました。',
-      '元のお支払い方法に返金します。反映には通常5〜10営業日かかります。',
-    ],
+  const cancel = async () => {
+    if (!id || !token || !confirm('この申し込みをキャンセルしますか？')) return;
+    setCancelling(true); setError('');
+    try {
+      await api('/booking/cancel', { method: 'POST', body: JSON.stringify({ bookingId: id, token }) });
+      setAttempt((v) => v + 1);
+    } catch (err) { setError((err as Error).message); }
+    finally { setCancelling(false); }
   };
   return (
     <div className="page-container narrow">
       <div className="completion">
         <div className="completion-icon">
-          {booking?.status === 'paid' ? <Check size={34} /> : <ClockIcon />}
+          {booking?.status === 'confirmed' ? <Check size={34} /> : <RefreshCw size={28} />}
         </div>
         <span className="eyebrow">YOUR APPLICATION</span>
-        <h1>{booking ? messages[booking.status][0] : '申し込み状況の確認'}</h1>
+        <h1>{booking?.status === 'confirmed' ? 'お申し込みが確定しました。' : booking?.status === 'cancelled' ? 'キャンセルしました。' : '申し込み状況の確認'}</h1>
         {error && (
           <p className="form-error" role="alert">
             {error}
@@ -428,45 +403,19 @@ export function CompletePage() {
         )}
         {booking && (
           <>
-            <p>{messages[booking.status][1]}</p>
+            <p>{booking.status === 'confirmed' ? '当日は公的な身分証をお持ちください。参加費は会場でお支払いください。' : '受付番号は無効になりました。'}</p>
             <div className="confirmation-details">
               <h2>{booking.eventTitle}</h2>
-              <p>お支払い金額：{yen(booking.amount)}（税込）</p>
-              {booking.refundedAmount > 0 && <p>返金額：{yen(booking.refundedAmount)}</p>}
+              <p>会場でのお支払い：{yen(booking.amount)}（税込）</p>
+              <p>お支払い状況：{booking.received ? '受領済み' : '当日会場でお支払い'}</p>
               <small>受付番号：{booking.id.slice(0, 12).toUpperCase()}</small>
             </div>
-            {booking.status === 'holding' && params.has('cancelled') && (
-              <p>決済画面から戻りました。未決済の席は約30分後に解放されます。</p>
-            )}
           </>
         )}
-        {booking?.status === 'holding' && (
-          <button
-            className="button cream"
-            disabled={resuming}
-            onClick={async () => {
-              setResuming(true);
-              try {
-                const result = await api<{ url: string }>('/booking/resume', {
-                  method: 'POST',
-                  body: JSON.stringify({ bookingId: id, token }),
-                });
-                const url = new URL(result.url);
-                if (url.hostname !== 'checkout.stripe.com')
-                  throw new Error('決済先の確認に失敗しました');
-                window.location.assign(url.toString());
-              } catch (e) {
-                setError((e as Error).message);
-              } finally {
-                setResuming(false);
-              }
-            }}
-          >
-            {resuming ? '確認しています…' : '決済を再開する'}
-            <ArrowRight size={17} />
-          </button>
+        {booking?.status === 'confirmed' && !booking.received && (
+          <button className="button outline" onClick={cancel} disabled={cancelling}>{cancelling ? '手続き中…' : '申し込みをキャンセルする'}</button>
         )}
-        {(!booking || booking.status === 'holding' || error) && (
+        {(!booking || error) && (
           <button className="button outline" onClick={() => setAttempt((v) => v + 1)}>
             <RefreshCw size={17} />
             状況を再確認する
@@ -482,9 +431,6 @@ export function CompletePage() {
       </div>
     </div>
   );
-}
-function ClockIcon() {
-  return <RefreshCw size={28} />;
 }
 export function ContactPage() {
   const [sent, setSent] = useState(false),
@@ -568,7 +514,7 @@ export function ContactPage() {
               お問い合わせの種類
               <select name="category">
                 <option>参加について</option>
-                <option>キャンセル・返金</option>
+                <option>キャンセル・お支払い</option>
                 <option>開催について</option>
                 <option>その他</option>
               </select>
@@ -581,7 +527,7 @@ export function ContactPage() {
                 minLength={10}
                 maxLength={4000}
                 rows={7}
-                placeholder="参加済みのイベントについては、イベント名と開催日をご記入ください。カード番号などの決済情報は入力しないでください。"
+                placeholder="参加済みのイベントについては、イベント名と開催日をご記入ください。"
               />
             </label>
             <label className="checkbox-label">

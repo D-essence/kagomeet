@@ -3,10 +3,8 @@ service firebase.storage {
   match /b/{bucket}/o {
     match /event-images/{file} {
       allow read: if true;
-      allow create, update: if request.auth != null && request.auth.token.admin == true
-        && request.resource.size <= 5 * 1024 * 1024
-        && request.resource.contentType.matches('image/(jpeg|png|webp)');
-      allow delete: if request.auth != null && request.auth.token.admin == true;
+      // Admin uploads are validated by the authenticated Cloud Function.
+      allow write: if false;
     }
     match /{allPaths=**} { allow read, write: if false; }
   }

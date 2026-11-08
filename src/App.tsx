@@ -33,7 +33,7 @@ export default function App() {
       '/contact': 'お問い合わせ',
       '/terms': '利用規約',
       '/privacy': 'プライバシーポリシー',
-      '/legal': '特定商取引法に基づく表記',
+      '/legal': '運営者情報・お支払い',
       '/admin': '運営者管理',
       '/complete': 'お申し込みの確認',
     };

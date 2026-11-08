@@ -3,6 +3,7 @@ export type Gender = 'male' | 'female';
 export interface EventData {
   id: string;
   title: string;
+  category?: '飲み会' | '交流会' | '季節イベント' | 'アウトドア' | 'スポーツ' | 'その他';
   area: Area;
   venue: string;
   address: string;
@@ -17,6 +18,7 @@ export interface EventData {
   femaleCapacity: number;
   maleRemaining: number;
   femaleRemaining: number;
+  registrationCount?: number;
   description: string;
   conditions: string;
   schedule: { time: string; text: string }[];
@@ -39,8 +41,8 @@ export interface Participant {
   email: string;
   phone: string;
   amount: number;
-  refundedAmount: number;
-  status: 'holding' | 'paid' | 'expired' | 'refunded';
+  status: 'confirmed' | 'cancelled';
+  received: boolean;
   checkedIn: boolean;
   createdAt: number;
 }

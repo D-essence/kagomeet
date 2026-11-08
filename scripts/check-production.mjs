@@ -6,18 +6,16 @@ const required = [
   'VITE_FIREBASE_PROJECT_ID',
   'VITE_FIREBASE_STORAGE_BUCKET',
   'VITE_FIREBASE_APP_ID',
-  'VITE_RECAPTCHA_SITE_KEY',
   'VITE_BUSINESS_NAME',
-  'VITE_BUSINESS_REPRESENTATIVE',
-  'VITE_BUSINESS_ADDRESS',
-  'VITE_BUSINESS_PHONE',
-  'VITE_SUPPORT_EMAIL',
 ];
+if (env.VITE_REGISTRATIONS_ENABLED === 'true') required.push('VITE_RECAPTCHA_SITE_KEY');
 const missing = required.filter((k) => !env[k] || /YOUR_|未設定|example\./i.test(env[k]));
 if (env.VITE_DEMO_MODE !== 'false') missing.push('VITE_DEMO_MODE must be false');
 if (env.VITE_USE_EMULATORS === 'true') missing.push('VITE_USE_EMULATORS must be false');
 if (env.VITE_FIREBASE_PROJECT_ID?.startsWith('demo-'))
   missing.push('A real Firebase project is required');
+if (env.VITE_REGISTRATIONS_ENABLED !== 'true' && env.VITE_REGISTRATIONS_ENABLED !== 'false')
+  missing.push('VITE_REGISTRATIONS_ENABLED must be true or false');
 if (missing.length) {
   console.error(
     'Production deployment is blocked. Configure the following names (values are not logged):\n' +
@@ -25,6 +23,4 @@ if (missing.length) {
   );
   process.exit(1);
 }
-console.log(
-  'Public deployment configuration checks passed. Complete the Stripe/email live acceptance checklist separately.',
-);
+console.log('Public deployment configuration checks passed.');

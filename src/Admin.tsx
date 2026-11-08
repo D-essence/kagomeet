@@ -2,12 +2,12 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
 import {
   onAuthStateChanged,
-  signInWithEmailAndPassword,
+  signInWithRedirect,
+  getRedirectResult,
+  GoogleAuthProvider,
   signOut,
-  sendPasswordResetEmail,
   type User,
 } from 'firebase/auth';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import {
   CalendarDays,
   Users,
@@ -22,19 +22,16 @@ import {
   Mail,
   RefreshCw,
   Check,
+  Settings2,
 } from 'lucide-react';
-import { api, auth, isDemo, storage } from './lib';
+import { api, auth, isDemo } from './lib';
 import { demoEvents } from './data';
 import { areas, fullDate, yen, type EventData, type Participant } from './types';
 import { Brand } from './components/Layout';
 import ImageCropper from './components/ImageCropper';
-const statuses = {
-  holding: '決済待ち',
-  paid: '参加確定',
-  expired: '期限切れ',
-  refunded: '返金済み',
-};
-type Sale = { eventId: string; title: string; gross: number; refunded: number; bookings: number };
+const statuses = { confirmed: '参加確定', cancelled: 'キャンセル済み' };
+type Sale = { eventId: string; title: string; gross: number; outstanding: number; bookings: number; receivedCount: number };
+type SocialSettings = { instagramUrl: string; lineUrl: string };
 type Inquiry = {
   id: string;
   name: string;
@@ -43,7 +40,6 @@ type Inquiry = {
   category: string;
   createdAt: number;
 };
-type MailJob = { id: string; bookingId: string; kind: string; status: string; attempts: number };
 export default function Admin() {
   const [user, setUser] = useState<User | null>(null),
     [allowed, setAllowed] = useState(false),
@@ -52,36 +48,45 @@ export default function Admin() {
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   useEffect(() => {
-    if (!auth) {
+    const firebaseAuth = auth;
+    if (!firebaseAuth) {
       setChecking(false);
       return;
     }
-    return onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      setChecking(true);
-      try {
-        setAllowed(Boolean(u && (await u.getIdTokenResult(true)).claims.admin));
-        if (u && !(await u.getIdTokenResult()).claims.admin)
-          setError('このアカウントには管理者権限がありません。');
-      } catch {
-        setError('権限の確認に失敗しました');
-      } finally {
-        setChecking(false);
-      }
-    });
+    let active = true;
+    let unsubscribe: (() => void) | undefined;
+    void getRedirectResult(firebaseAuth)
+      .catch((err: { code?: string }) => {
+        if (active) setError(`ログインを完了できませんでした。${err.code ? `（${err.code}）` : ''}`);
+      })
+      .finally(() => {
+        if (!active) return;
+        unsubscribe = onAuthStateChanged(firebaseAuth, async (u) => {
+          setUser(u);
+          setChecking(true);
+          try {
+            if (u) { await api('/admin/session', {}, true); setAllowed(true); setError(''); }
+            else setAllowed(false);
+          } catch {
+            setAllowed(false);
+            setError('このアカウントには管理者権限がありません。');
+          } finally {
+            setChecking(false);
+          }
+        });
+      });
+    return () => { active = false; unsubscribe?.(); };
   }, []);
-  const login = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+  const login = async () => {
     setBusy(true);
     setError('');
-    const d = new FormData(e.currentTarget);
     try {
       if (!auth) throw new Error('Firebaseの接続設定が必要です。READMEの手順で設定してください。');
-      await signInWithEmailAndPassword(auth, String(d.get('email')), String(d.get('password')));
-    } catch {
+      await signInWithRedirect(auth, new GoogleAuthProvider());
+    } catch (err) {
       setError(
         auth
-          ? 'ログインできませんでした。メールアドレスとパスワードをご確認ください。'
+          ? `ログインできませんでした。運営者アカウントでお試しください。${(err as { code?: string }).code ? `（${(err as { code?: string }).code}）` : ''}`
           : 'Firebaseの接続設定が必要です。READMEをご確認ください。',
       );
     } finally {
@@ -102,46 +107,12 @@ export default function Admin() {
               {error}
             </p>
           )}
-          <form onSubmit={login}>
-            <label>
-              メールアドレス
-              <input name="email" autoComplete="username" type="email" required />
-            </label>
-            <label>
-              パスワード
-              <input
-                name="password"
-                autoComplete="current-password"
-                type="password"
-                required
-                minLength={8}
-              />
-            </label>
-            <button className="button dark wide" disabled={busy}>
-              {busy ? 'ログイン中…' : 'ログイン'}
-            </button>
-          </form>
+          <button className="button dark wide" onClick={login} disabled={busy}>{busy ? 'ログイン中…' : 'Google アカウントでログイン'}</button>
           {user && (
             <button className="back-button" onClick={() => auth && signOut(auth)}>
               別のアカウントでログイン
             </button>
           )}
-          <button
-            className="back-button"
-            onClick={async () => {
-              const email = prompt('パスワード再設定用のメールアドレスを入力してください');
-              if (email && auth) {
-                try {
-                  await sendPasswordResetEmail(auth, email);
-                  setError('対象アカウントがある場合、再設定メールを送信しました。');
-                } catch {
-                  setError('再設定メールを送信できませんでした。');
-                }
-              }
-            }}
-          >
-            パスワードを忘れた方
-          </button>
           {isDemo && (
             <button className="button outline wide" onClick={() => setDemo(true)}>
               デモ管理画面を見る
@@ -170,13 +141,14 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [loading, setLoading] = useState(false),
+    [busy, setBusy] = useState(false),
     [editing, setEditing] = useState<EventData | null | undefined>(undefined),
     [selected, setSelected] = useState(demo ? demoEvents[0].id : ''),
     [participants, setParticipants] = useState<Participant[]>([]),
     [query, setQuery] = useState(''),
     [sales, setSales] = useState<Sale[]>([]),
     [inquiries, setInquiries] = useState<Inquiry[]>([]),
-    [jobs, setJobs] = useState<MailJob[]>([]);
+    [social, setSocial] = useState<SocialSettings>({ instagramUrl: '', lineUrl: '' });
   const load = async () => {
     setError('');
     setLoading(true);
@@ -186,9 +158,9 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
         setEvents(e);
         setSelected((v) => v || e[0]?.id || '');
         if (tab === 'sales') setSales(await api<Sale[]>('/admin/sales', {}, true));
+        if (tab === 'settings') setSocial(await api<SocialSettings>('/admin/settings', {}, true));
         if (tab === 'inbox') {
           setInquiries(await api<Inquiry[]>('/admin/inquiries', {}, true));
-          setJobs(await api<MailJob[]>('/admin/mail', {}, true));
         }
       }
     } catch (e) {
@@ -261,23 +233,15 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
       setPending((v) => v.filter((id) => id !== p.id));
     }
   };
-  const refund = async (p: Participant) => {
-    const reason = prompt(
-      `${p.name}様へ${yen(p.amount - p.refundedAmount)}を返金します。返金理由を入力してください。`,
-    );
-    if (!reason) return;
-    if (!confirm('元の決済方法への返金を実行します。よろしいですか？')) return;
+  const payment = async (p: Participant) => {
+    if (!confirm(`${p.name}様の参加費 ${yen(p.amount)} を${p.received ? '未収に戻し' : '受領済みにし'}ますか？`)) return;
+    setPending((v) => [...v, p.id]);
     try {
-      await api(
-        `/admin/bookings/${p.id}/refund`,
-        { method: 'POST', body: JSON.stringify({ reason }) },
-        true,
-      );
-      setNotice('返金を依頼しました。決済通知の受信後に返金済みへ変わります。');
-      await loadParticipants();
-    } catch (err) {
-      setError((err as Error).message);
-    }
+      await api(`/admin/bookings/${p.id}/payment`, { method: 'PATCH', body: JSON.stringify({ received: !p.received }) }, true);
+      setParticipants((v) => v.map((x) => x.id === p.id ? { ...x, received: !p.received } : x));
+      setNotice('集金記録を更新しました。');
+    } catch (err) { setError((err as Error).message); }
+    finally { setPending((v) => v.filter((id) => id !== p.id)); }
   };
   const save = async (data: EventData) => {
     if (demo) {
@@ -317,10 +281,11 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
   const total = sales.reduce(
     (a, s) => ({
       gross: a.gross + s.gross,
-      refunded: a.refunded + s.refunded,
+      outstanding: a.outstanding + s.outstanding,
       count: a.count + s.bookings,
+      receivedCount: a.receivedCount + s.receivedCount,
     }),
-    { gross: 0, refunded: 0, count: 0 },
+    { gross: 0, outstanding: 0, count: 0, receivedCount: 0 },
   );
   return (
     <div className="admin-shell">
@@ -339,8 +304,9 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
           {[
             ['events', 'イベント', CalendarDays],
             ['participants', '参加者', Users],
-            ['sales', '売上', ChartNoAxesCombined],
+            ['sales', '集金', ChartNoAxesCombined],
             ['inbox', 'お問い合わせ', Mail],
+            ['settings', '連絡先設定', Settings2],
           ].map(([key, label, Icon]) => {
             const I = Icon as typeof Users;
             return (
@@ -392,8 +358,9 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
                       {
                         events: 'イベント管理',
                         participants: '参加者管理',
-                        sales: '売上',
-                        inbox: 'お問い合わせ・メール',
+                        sales: '集金管理',
+                        inbox: 'お問い合わせ',
+                        settings: '連絡先設定',
                       }[tab]
                     }
                   </h1>
@@ -509,16 +476,12 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
                             <input
                               type="checkbox"
                               checked={p.checkedIn}
-                              disabled={p.status !== 'paid' || pending.includes(p.id)}
+                              disabled={p.status !== 'confirmed' || pending.includes(p.id)}
                               onChange={() => attendance(p)}
                             />
                             <span>出席</span>
                           </label>
-                          {p.status === 'paid' && (
-                            <button className="button outline small" onClick={() => refund(p)}>
-                              キャンセル・返金
-                            </button>
-                          )}
+                          {p.status === 'confirmed' && <button className="button outline small" onClick={() => payment(p)} disabled={pending.includes(p.id)}>{p.received ? '受領済み' : '代金の受領を記録'}</button>}
                         </div>
                       </article>
                     ))}
@@ -536,37 +499,52 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
                 <>
                   <div className="stat-grid">
                     <div>
-                      <span>決済総額</span>
+                      <span>受領額</span>
                       <strong>{yen(total.gross)}</strong>
                     </div>
                     <div>
-                      <span>返金総額</span>
-                      <strong>{yen(total.refunded)}</strong>
+                      <span>未収金額</span>
+                      <strong>{yen(total.outstanding)}</strong>
                     </div>
                     <div>
-                      <span>売上（返金差引後）</span>
-                      <strong>{yen(total.gross - total.refunded)}</strong>
+                      <span>受領人数</span>
+                      <strong>{total.receivedCount}人</strong>
                     </div>
                   </div>
                   <p className="muted">
-                    税込・Stripe手数料控除前。決済通知で確定したデータを集計します。
+                    会場で受領を記録した金額です。未収額は参加確定者の参加費を集計しています。
                   </p>
-                  <h2>イベント別売上</h2>
+                  <h2>イベント別の集金</h2>
                   <div className="sales-list">
                     {sales.map((s) => (
                       <div key={s.eventId}>
                         <h3>{s.title}</h3>
                         <p>
-                          {s.bookings}件 / 返金 {yen(s.refunded)}
+                          {s.bookings}件 / 受領済み {s.receivedCount}件 / 未収 {yen(s.outstanding)}
                         </p>
-                        <strong>{yen(s.gross - s.refunded)}</strong>
+                        <strong>{yen(s.gross)}</strong>
                       </div>
                     ))}
                   </div>
                   {!sales.length && !loading && (
-                    <div className="empty-state">売上データはまだありません。</div>
+                    <div className="empty-state">集金データはまだありません。</div>
                   )}
                 </>
+              )}
+              {tab === 'settings' && (
+                <form className="event-editor settings-editor" onSubmit={async (e) => {
+                  e.preventDefault(); setError(''); setBusy(true);
+                  try {
+                    if (!demo) await api('/admin/settings', { method: 'PUT', body: JSON.stringify(social) }, true);
+                    setNotice(demo ? 'デモの設定を変更しました。再読み込みで元に戻ります。' : '連絡先を保存しました。公開サイトに反映されます。');
+                  } catch (err) { setError((err as Error).message); }
+                  finally { setBusy(false); }
+                }}>
+                  <p>参加者が開く公式アカウントの URL を設定します。空欄のアイコンは公開画面に表示されません。</p>
+                  <label>Instagram の URL<input type="url" value={social.instagramUrl} placeholder="https://www.instagram.com/..." onChange={(e) => setSocial((v) => ({ ...v, instagramUrl: e.target.value }))} /></label>
+                  <label>LINE の URL<input type="url" value={social.lineUrl} placeholder="https://lin.ee/..." onChange={(e) => setSocial((v) => ({ ...v, lineUrl: e.target.value }))} /></label>
+                  <button className="button dark" disabled={busy}>{busy ? '保存中…' : '連絡先を保存'}<Check size={18} /></button>
+                </form>
               )}
               {tab === 'inbox' && (
                 <>
@@ -582,30 +560,6 @@ function Dashboard({ demo, logout }: { demo: boolean; logout: () => void }) {
                     </article>
                   ))}
                   {!inquiries.length && <p className="muted">お問い合わせはありません。</p>}
-                  <h2>未送信・失敗した確認メール</h2>
-                  {jobs.map((j) => (
-                    <div className="mail-job" key={j.id}>
-                      <span>
-                        {j.kind} / {j.status} / 再試行 {j.attempts}回
-                        <small>受付番号 {j.bookingId.slice(0, 12)}</small>
-                      </span>
-                      <button
-                        className="button outline small"
-                        onClick={async () => {
-                          try {
-                            await api(`/admin/mail/${j.id}/retry`, { method: 'POST' }, true);
-                            await load();
-                            setNotice('再送キューに登録しました。');
-                          } catch (e) {
-                            setError((e as Error).message);
-                          }
-                        }}
-                      >
-                        再送する
-                      </button>
-                    </div>
-                  ))}
-                  {!jobs.length && <p className="muted">未送信のメールはありません。</p>}
                 </>
               )}
             </>
@@ -626,11 +580,15 @@ function blankEvent(): EventData {
     ...demoEvents[0],
     id: '',
     title: '',
+    category: '交流会',
     venue: '',
     address: '',
     description: '',
     conditions: '公的な身分証をご提示いただける方。',
     notes: '飲酒運転・迷惑行為・勧誘は禁止です。',
+    schedule: [{ time: '', text: '' }],
+    malePrice: 0,
+    femalePrice: 0,
     image: '',
     tag: '',
     startsAt: start.toISOString(),
@@ -669,13 +627,14 @@ function EventEditor({
         throw new Error('終了日時は開始日時より後にしてください');
       let image = form.image;
       if (imageBlob && !demo) {
-        if (!storage) throw new Error('Storageが未設定です');
-        const fileRef = ref(storage, `event-images/${crypto.randomUUID()}.jpg`);
-        await uploadBytes(fileRef, imageBlob, {
-          contentType: 'image/jpeg',
-          cacheControl: 'public,max-age=31536000',
-        });
-        image = await getDownloadURL(fileRef);
+        const bytes = new Uint8Array(await imageBlob.arrayBuffer());
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        const uploaded = await api<{ url: string }>('/admin/images', {
+          method: 'POST',
+          body: JSON.stringify({ base64: btoa(binary), contentType: 'image/jpeg' }),
+        }, true);
+        image = uploaded.url;
       }
       await onSave({ ...form, image });
     } catch (err) {
@@ -706,6 +665,11 @@ function EventEditor({
             value={form.title}
             onChange={(e) => update('title', e.target.value)}
           />
+        </label>
+        <label>カテゴリ
+          <select value={form.category || '交流会'} onChange={(e) => update('category', e.target.value)}>
+            {['飲み会', '交流会', '季節イベント', 'アウトドア', 'スポーツ', 'その他'].map((category) => <option key={category}>{category}</option>)}
+          </select>
         </label>
         <div className="editor-image">
           {form.image ? (
@@ -812,8 +776,8 @@ function EventEditor({
           {[
             ['minAge', '対象年齢（下限）', 18, 80],
             ['maxAge', '対象年齢（上限）', 18, 80],
-            ['malePrice', '男性料金（税込・円）', 100, 100000],
-            ['femalePrice', '女性料金（税込・円）', 100, 100000],
+            ['malePrice', '男性料金（税込・円）', 0, 100000],
+            ['femalePrice', '女性料金（税込・円）', 0, 100000],
             ['maleCapacity', '男性定員', 1, 500],
             ['femaleCapacity', '女性定員', 1, 500],
           ].map(([k, label, min, max]) => (

@@ -3,11 +3,12 @@ import { getAuth, connectAuthEmulator } from 'firebase/auth';
 import { getStorage, connectStorageEmulator } from 'firebase/storage';
 import {
   initializeAppCheck,
-  ReCaptchaV3Provider,
+  ReCaptchaEnterpriseProvider,
   getToken,
   type AppCheck,
 } from 'firebase/app-check';
 export const isDemo = import.meta.env.VITE_DEMO_MODE === 'true';
+export const registrationsOpen = isDemo || import.meta.env.VITE_REGISTRATIONS_ENABLED === 'true';
 export const configured = Boolean(
   import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_PROJECT_ID,
 );
@@ -30,7 +31,7 @@ if (emulator && auth && storage) {
 let appCheck: AppCheck | null = null;
 if (app && !emulator && import.meta.env.VITE_RECAPTCHA_SITE_KEY)
   appCheck = initializeAppCheck(app, {
-    provider: new ReCaptchaV3Provider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
+    provider: new ReCaptchaEnterpriseProvider(import.meta.env.VITE_RECAPTCHA_SITE_KEY),
     isTokenAutoRefreshEnabled: true,
   });
 export async function api<T>(path: string, options: RequestInit = {}, admin = false): Promise<T> {

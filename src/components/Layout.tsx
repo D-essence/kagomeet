@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { ArrowUpRight, Menu, X, ArrowRight } from 'lucide-react';
-import { isDemo } from '../lib';
+import { ArrowUpRight, Menu, X, ArrowRight, Instagram, MessageCircle } from 'lucide-react';
+import { api, isDemo } from '../lib';
+type SocialSettings = { instagramUrl: string; lineUrl: string };
+function SocialLinks({ settings }: { settings: SocialSettings }) {
+  return <div className="social-links" aria-label="公式SNS">
+    {settings.instagramUrl && <a href={settings.instagramUrl} target="_blank" rel="noopener noreferrer" aria-label="KAGOMEET の Instagram を開く"><Instagram size={19} /></a>}
+    {settings.lineUrl && <a href={settings.lineUrl} target="_blank" rel="noopener noreferrer" aria-label="KAGOMEET の LINE を開く"><MessageCircle size={19} /><span className="visually-hidden">LINE</span></a>}
+  </div>;
+}
 export function Brand({ light = false }: { light?: boolean }) {
   return (
     <Link className={`brand ${light ? 'light' : ''}`} to="/" aria-label="KAGOMEET トップページ">
@@ -14,9 +21,13 @@ export function Brand({ light = false }: { light?: boolean }) {
 }
 export default function Layout() {
   const [open, setOpen] = useState(false),
+    [social, setSocial] = useState<SocialSettings>({ instagramUrl: '', lineUrl: '' }),
     location = useLocation(),
     menuRef = useRef<HTMLDivElement>(null),
     buttonRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!isDemo) api<SocialSettings>('/settings').then(setSocial).catch(() => {});
+  }, []);
   useEffect(() => {
     setOpen(false);
     window.scrollTo({ top: 0 });
@@ -74,6 +85,7 @@ export default function Layout() {
         <Link className="header-cta" to="/contact">
           お問い合わせ
         </Link>
+        <SocialLinks settings={social} />
         <button
           ref={buttonRef}
           className="menu-button"
@@ -114,6 +126,7 @@ export default function Layout() {
             お問い合わせ
             <ArrowRight />
           </NavLink>
+          <SocialLinks settings={social} />
           <p>鹿児島で、気軽につながる。</p>
         </div>
       )}
@@ -132,6 +145,7 @@ export default function Layout() {
             次のイベントを探す
             <ArrowUpRight />
           </Link>
+          <SocialLinks settings={social} />
         </div>
         <div className="footer-links">
           <Link to="/about">初めての方へ</Link>
@@ -143,7 +157,7 @@ export default function Layout() {
           <div>
             <Link to="/terms">利用規約</Link>
             <Link to="/privacy">プライバシーポリシー</Link>
-            <Link to="/legal">特定商取引法に基づく表記</Link>
+            <Link to="/legal">運営者情報・お支払い</Link>
             <Link to="/admin">運営者ログイン</Link>
           </div>
           <small>© {new Date().getFullYear()} KAGOMEET</small>

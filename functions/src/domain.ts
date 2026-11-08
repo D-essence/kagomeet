@@ -4,6 +4,7 @@ export const genderSchema = z.enum(['male', 'female']);
 export const eventSchema = z
   .object({
     title: z.string().trim().min(3).max(100),
+    category: z.enum(['飲み会', '交流会', '季節イベント', 'アウトドア', 'スポーツ', 'その他']).default('交流会'),
     area: z.enum(areas),
     venue: z.string().trim().min(1).max(120),
     address: z.string().trim().min(5).max(250),
@@ -12,8 +13,8 @@ export const eventSchema = z
     minAge: z.number().int().min(18).max(80),
     maxAge: z.number().int().min(18).max(80),
     alcohol: z.boolean(),
-    malePrice: z.number().int().min(100).max(100000),
-    femalePrice: z.number().int().min(100).max(100000),
+    malePrice: z.number().int().min(0).max(100000),
+    femalePrice: z.number().int().min(0).max(100000),
     maleCapacity: z.number().int().min(1).max(500),
     femaleCapacity: z.number().int().min(1).max(500),
     description: z.string().trim().min(10).max(5000),
@@ -91,16 +92,13 @@ export type Booking = Omit<CheckoutInput, 'idempotencyKey' | 'terms'> & {
   participantKey: string;
   eventTitle: string;
   amount: number;
-  status: 'holding' | 'paid' | 'expired' | 'refunded';
+  status: 'confirmed' | 'cancelled';
   createdAt: number;
-  expiresAt: number;
-  sessionId: string | null;
-  paymentIntentId: string | null;
   checkedIn: boolean;
-  refundedAmount: number;
   termsVersion: string;
-  paidAt?: number;
-  refundReason?: string;
+  received?: boolean;
+  receivedAt?: number;
+  cancelledAt?: number;
 };
 export class AppError extends Error {
   constructor(

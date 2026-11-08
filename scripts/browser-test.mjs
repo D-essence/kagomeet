@@ -62,7 +62,7 @@ try {
   await noOverflow();
   await page.screenshot({ path: 'test-results/apply-review-mobile.png', fullPage: true });
   await page.getByRole('button', { name: 'デモの確認画面へ' }).click();
-  await page.getByText('実際の予約・決済・メール送信は行っていません。', { exact: true }).waitFor();
+  await page.getByText('実際の予約・集金・メール送信は行っていません。', { exact: true }).waitFor();
   await visit('/faq');
   await page.locator('summary').first().click();
   assert.equal(await page.locator('details[open]').count(), 1);
@@ -87,6 +87,8 @@ try {
   await page.getByLabel('会場住所').fill('鹿児島県霧島市国分中央');
   await page.getByLabel('飲酒を伴うイベント（20歳以上）').uncheck();
   await page.getByLabel('対象年齢（下限）').fill('18');
+  await page.getByLabel('流れ1の時刻').fill('19:00');
+  await page.getByLabel('流れ1の内容').fill('受付・交流開始');
   await page
     .getByLabel('イベントの説明')
     .fill('同世代でお茶を飲みながらゆったり交流するノンアルコールイベントです。');
@@ -96,8 +98,8 @@ try {
   await page.getByRole('dialog').waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'イベントを保存', exact: true }).click();
   await page.getByRole('heading', { name: '国分のノンアルコール交流会', exact: true }).waitFor();
-  await page.getByRole('button', { name: '売上', exact: true }).click();
-  await page.getByText('売上データはまだありません。').waitFor();
+  await page.getByRole('button', { name: '集金', exact: true }).click();
+  await page.getByText('集金データはまだありません。').waitFor();
   await noOverflow();
   await page.setViewportSize({ width: 320, height: 740 });
   for (const path of [

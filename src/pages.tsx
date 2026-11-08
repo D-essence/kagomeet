@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   ArrowRight,
@@ -11,11 +11,14 @@ import {
   Plus,
   Minus,
   ShieldCheck,
+  CalendarDays,
+  List,
+  Search,
 } from 'lucide-react';
 import { EventCard, EventStatus, LoadState, useEvents } from './components/Events';
 import { areas, cities, dateParts, fullDate, yen, type Area } from './types';
 import { faqs } from './data';
-import { isDemo, business } from './lib';
+import { api, isDemo, registrationsOpen, business } from './lib';
 export function PageHeading({
   en,
   title,
@@ -221,7 +224,7 @@ export function Home() {
           <span className="eyebrow">お申し込み済みの方へ</span>
           <h3>ご予約の確認・キャンセル</h3>
           <p>
-            確認メール内のリンクから申し込み状況をご確認いただけます。
+            申込完了画面のリンクから申し込み状況をご確認いただけます。
             <br />
             キャンセルのご相談は、<Link to="/contact">お問い合わせ</Link>へ。
           </p>
@@ -262,7 +265,34 @@ export function EventsPage() {
   const [params, setParams] = useSearchParams(),
     area = params.get('area') || 'all',
     state = useEvents();
-  const filtered = state.events.filter((e) => area === 'all' || e.area === area);
+  const [query, setQuery] = useState(''),
+    [category, setCategory] = useState('all'),
+    [period, setPeriod] = useState('all'),
+    [available, setAvailable] = useState(false),
+    [sort, setSort] = useState('soon'),
+    [view, setView] = useState<'list' | 'calendar'>('list'),
+    [monthOffset, setMonthOffset] = useState(0);
+  const now = Date.now();
+  const tokyoDay = (date: Date) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
+  const today = tokyoDay(new Date(now));
+  const filtered = state.events.filter((e) => {
+    const start = Date.parse(e.startsAt);
+    const text = `${e.title} ${e.venue} ${e.area} ${e.description}`.toLocaleLowerCase('ja-JP');
+    const day = tokyoDay(new Date(start));
+    return (area === 'all' || e.area === area)
+      && (category === 'all' || (e.category || '交流会') === category)
+      && (!query.trim() || text.includes(query.trim().toLocaleLowerCase('ja-JP')))
+      && (!available || (e.maleRemaining > 0 || e.femaleRemaining > 0))
+      && (period === 'all' || period === 'today' && day === today || period === 'week' && start <= now + 7 * 86400000 || period === 'month' && start <= now + 30 * 86400000 || period === 'weekend' && ['土', '日'].some((w) => dateParts(e.startsAt).weekday.includes(w)) && start <= now + 7 * 86400000);
+  }).sort((a, b) => sort === 'price'
+    ? Math.min(a.malePrice, a.femalePrice) - Math.min(b.malePrice, b.femalePrice)
+    : sort === 'popular' ? (b.registrationCount || 0) - (a.registrationCount || 0) || a.startsAt.localeCompare(b.startsAt)
+    : a.startsAt.localeCompare(b.startsAt));
+  const baseMonth = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }));
+  const month = new Date(baseMonth.getFullYear(), baseMonth.getMonth() + monthOffset, 1);
+  const monthDays = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+  const firstWeekday = (month.getDay() + 6) % 7;
+  const calendarCells = Array.from({ length: Math.ceil((firstWeekday + monthDays) / 7) * 7 }, (_, i) => i - firstWeekday + 1);
   return (
     <div className="page-container">
       <Breadcrumb items={[{ label: 'イベント一覧' }]} />
@@ -286,19 +316,22 @@ export function EventsPage() {
             </button>
           ))}
         </div>
+        <div className="discovery-controls">
+          <label className="event-search"><Search size={18} /><input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="イベントを検索" aria-label="イベントを検索" /></label>
+          <label>カテゴリ<select value={category} onChange={(e) => setCategory(e.target.value)}><option value="all">すべて</option>{['飲み会', '交流会', '季節イベント', 'アウトドア', 'スポーツ', 'その他'].map((v) => <option key={v}>{v}</option>)}</select></label>
+          <label>開催日<select value={period} onChange={(e) => setPeriod(e.target.value)}><option value="all">すべての日程</option><option value="today">今日</option><option value="weekend">今週末</option><option value="week">1週間以内</option><option value="month">1か月以内</option></select></label>
+          <label>並び替え<select value={sort} onChange={(e) => setSort(e.target.value)}><option value="soon">開催が近い順</option><option value="popular">申込が多い順</option><option value="price">参加費が安い順</option></select></label>
+        </div>
+        <label className="availability-filter"><input type="checkbox" checked={available} onChange={(e) => setAvailable(e.target.checked)} />申込できるイベントのみ</label>
       </div>
       <div className="result-heading">
         <p>
           <strong>{filtered.length}</strong> 件のイベント
         </p>
-        <span>開催日が近い順</span>
+        <div className="view-switch" role="group" aria-label="イベントの表示方法"><button className={view === 'list' ? 'active' : ''} aria-pressed={view === 'list'} onClick={() => setView('list')}><List size={17} />一覧</button><button className={view === 'calendar' ? 'active' : ''} aria-pressed={view === 'calendar'} onClick={() => setView('calendar')}><CalendarDays size={17} />カレンダー</button></div>
       </div>
       <LoadState {...state} />
-      <div className="event-grid">
-        {filtered.map((e) => (
-          <EventCard key={e.id} event={e} />
-        ))}
-      </div>
+      {view === 'list' ? <div className="event-grid">{filtered.map((e) => <EventCard key={e.id} event={e} />)}</div> : <div className="event-calendar"><div className="calendar-toolbar"><button onClick={() => setMonthOffset((v) => v - 1)} aria-label="前の月">‹</button><strong>{month.getFullYear()}年 {month.getMonth() + 1}月</strong><button onClick={() => setMonthOffset((v) => v + 1)} aria-label="次の月">›</button></div><div className="calendar-grid">{['月','火','水','木','金','土','日'].map((d) => <span className="calendar-weekday" key={d}>{d}</span>)}{calendarCells.map((day, i) => { const date = new Date(month.getFullYear(), month.getMonth(), day); const key = `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; const items = filtered.filter((e) => tokyoDay(new Date(e.startsAt)) === key); return <div className={`calendar-day ${date.getMonth() !== month.getMonth() ? 'outside' : ''}`} key={i}><span>{date.getDate()}</span>{items.map((e) => <Link key={e.id} to={`/events/${e.id}`}>{e.title}</Link>)}</div>; })}</div></div>}
       {!state.loading && !state.error && !filtered.length && (
         <div className="empty-state">
           <MapPin size={32} />
@@ -438,11 +471,8 @@ export function EventDetail() {
               <li>営業・宗教・ネットワークビジネス等の勧誘は禁止です。</li>
               <li>お相手への配慮を忘れず、無理な連絡先交換はお控えください。</li>
             </ul>
-            <h3>キャンセル・返金について</h3>
-            <p>
-              開催日の7日前の同時刻までは全額返金、それ以降の参加者都合によるキャンセルは返金対象外です。運営都合の中止は全額返金します。
-              <Link to="/contact">お問い合わせ</Link>からご連絡ください。
-            </p>
+            <h3>お支払い・キャンセルについて</h3>
+            <p>参加費は当日会場でお支払いください。開催2時間前までは申込完了画面からキャンセルできます。それ以降は<Link to="/contact">お問い合わせ</Link>からご連絡ください。</p>
           </section>
         </article>
         <aside className="booking-aside">
@@ -474,7 +504,9 @@ export function EventDetail() {
             <small className="tax-note">
               税込 / {e.alcohol ? 'お食事・飲み放題付き' : 'ノンアルコールイベント'}
             </small>
-            {closed ? (
+            {!registrationsOpen ? (
+              <div className="button disabled">受付開始前です</div>
+            ) : closed ? (
               <div className="button disabled">受付を終了しました</div>
             ) : (
               <Link className="button coral" to={`/events/${e.id}/apply`}>
@@ -484,7 +516,7 @@ export function EventDetail() {
             )}
             <p className="payment-note">
               <ShieldCheck size={14} />
-              Stripeによる安全なオンライン決済
+              参加費は当日、会場でお支払い
             </p>
           </div>
           <Link className="aside-help" to="/faq">
@@ -493,7 +525,7 @@ export function EventDetail() {
           </Link>
         </aside>
       </div>
-      {!closed && (
+      {!closed && registrationsOpen && (
         <div className="mobile-booking">
           <div>
             <small>
@@ -632,12 +664,12 @@ export function AboutPage() {
             [
               '02',
               '申し込み・お支払い',
-              '必要事項を入力してオンライン決済へ。決済が確認できたら参加確定です。',
+              '必要事項を入力して内容を確認。受付番号が表示されたら参加確定です。',
             ],
             [
               '03',
               '当日は、気軽に会場へ',
-              '確認メールをチェック。公的な身分証を持って、受付時間にお越しください。',
+              '受付番号と公的な身分証を持ってお越しください。参加費は会場でお支払いください。',
             ],
           ].map(([num, title, body]) => (
             <div key={num}>
@@ -681,12 +713,16 @@ export function NotFound() {
   );
 }
 export function LegalPage({ kind }: { kind: 'terms' | 'privacy' | 'legal' }) {
+  const [instagramUrl, setInstagramUrl] = useState('');
+  useEffect(() => {
+    if (kind === 'legal' && !isDemo)
+      api<{ instagramUrl: string }>('/settings').then((settings) => setInstagramUrl(settings.instagramUrl)).catch(() => {});
+  }, [kind]);
   const name = {
     terms: '利用規約',
     privacy: 'プライバシーポリシー',
-    legal: '特定商取引法に基づく表記',
+    legal: '運営者情報・お支払い',
   }[kind];
-  const pending = (v: string) => v || '未設定（受付開始前に公開します）';
   return (
     <div className="page-container narrow legal-page">
       <Breadcrumb items={[{ label: name }]} />
@@ -702,16 +738,14 @@ export function LegalPage({ kind }: { kind: 'terms' | 'privacy' | 'legal' }) {
           </p>
           <h2>2. お申し込み・契約成立</h2>
           <p>
-            所定のフォームに正確な情報を入力し、オンライン決済を行ってください。決済完了をシステムが確認した時点で参加が確定します。入力途中や決済画面での一時的な席の確保は参加確定ではありません。
+            所定のフォームに正確な情報を入力し、申込完了画面で受付番号が表示された時点で参加が確定します。入力途中では席は確保されません。
           </p>
           <h2>3. 料金・お支払い</h2>
           <p>
-            参加費は各イベントページに税込で表示します。Stripeを通じたクレジットカード決済でお支払いいただきます。会場までの交通費等は参加者の負担です。
+            参加費は各イベントページに税込で表示します。当日、会場でお支払いください。会場までの交通費等は参加者の負担です。
           </p>
-          <h2>4. キャンセル・返金</h2>
-          <p>
-            開催日時の7日前の同時刻までは全額返金します。それ以降の参加者都合によるキャンセル、遅刻、無断欠席は返金対象外です。キャンセルはお問い合わせフォームからご連絡ください。運営都合で中止する場合は全額返金します。返金は元のお支払い方法へ行い、反映には通常5〜10営業日かかります。
-          </p>
+          <h2>4. キャンセル</h2>
+          <p>開催2時間前までは申込完了画面からキャンセルできます。それ以降はお問い合わせフォームからご連絡ください。会場でお支払い済みの方のキャンセル・返金は運営が個別に確認します。運営都合で中止する場合、既に受領した参加費は返金します。</p>
           <h2>5. 禁止事項</h2>
           <p>
             勧誘・営業行為、ハラスメント、飲酒や連絡先交換の強要、虚偽の申告、他の参加者に迷惑をかける行為、無断での撮影・公開、飲酒運転は禁止します。安全を守るため、違反が認められる場合は参加をお断りすることがあります。
@@ -735,16 +769,16 @@ export function LegalPage({ kind }: { kind: 'terms' | 'privacy' | 'legal' }) {
           <p>KAGOMEETは、イベント運営に必要な個人情報を以下の方針に従って取り扱います。</p>
           <h2>1. 取得する情報</h2>
           <p>
-            氏名、性別、年齢、メールアドレス、電話番号、参加イベント、決済・返金の状況、出欠、お問い合わせ内容、アクセスに関する情報を取得します。カード番号はStripeで処理され、当サービスでは保存しません。
+            氏名、性別、年齢、メールアドレス、電話番号、参加イベント、会場での支払い状況、出欠、お問い合わせ内容、アクセスに関する情報を取得します。オンラインでカード情報は取得しません。
           </p>
           <h2>2. 利用目的</h2>
           <p>
-            申し込み受付、本人・年齢確認、決済・返金、イベント連絡、確認メール送信、お問い合わせへの対応、不正利用の防止とサービス改善に使用します。
+            申し込み受付、本人・年齢確認、会場での集金管理、イベント連絡、お問い合わせへの対応、不正利用の防止とサービス改善に使用します。
           </p>
           <h2>3. 外部サービスの利用</h2>
           <p>
             データ管理・認証にGoogle
-            Firebase、決済にStripe、メール送信にResendを利用します。地図表示にはGoogle
+            Firebaseを利用します。地図表示にはGoogle
             マップを使用し、表示ボタンを押した際にGoogleへ接続します。不正利用防止のためFirebase App
             CheckおよびreCAPTCHAを利用する場合があります。これらの事業者は国外の設備でデータを処理する場合があります。委託先の規約・安全管理体制を確認し、必要な範囲で情報を取り扱います。
           </p>
@@ -764,31 +798,30 @@ export function LegalPage({ kind }: { kind: 'terms' | 'privacy' | 'legal' }) {
         </>
       ) : (
         <>
-          {(!business.name || !business.address || !business.phone) && (
-            <div className="notice">
-              運営者情報は未設定です。実際の参加申し込みの受付前に、すべての情報を公開します。
-            </div>
-          )}
           <dl className="info-table">
             <div>
-              <dt>販売事業者</dt>
-              <dd>{pending(business.name)}</dd>
+              <dt>運営</dt>
+              <dd>{business.name || 'kagomeet運営部'}</dd>
             </div>
-            <div>
+            {business.representative && <div>
               <dt>運営責任者</dt>
-              <dd>{pending(business.representative)}</dd>
-            </div>
-            <div>
+              <dd>{business.representative}</dd>
+            </div>}
+            {business.address && <div>
               <dt>所在地</dt>
-              <dd>{pending(business.address)}</dd>
-            </div>
-            <div>
+              <dd>{business.address}</dd>
+            </div>}
+            {business.phone && <div>
               <dt>電話番号</dt>
-              <dd>{pending(business.phone)}</dd>
-            </div>
-            <div>
+              <dd>{business.phone}</dd>
+            </div>}
+            {business.email && <div>
               <dt>メールアドレス</dt>
-              <dd>{pending(business.email)}</dd>
+              <dd>{business.email}</dd>
+            </div>}
+            <div>
+              <dt>お問い合わせ</dt>
+              <dd><Link to="/contact">お問い合わせフォーム</Link>{instagramUrl && <> / <a href={instagramUrl} target="_blank" rel="noopener noreferrer">公式 Instagram</a></>}</dd>
             </div>
             <div>
               <dt>販売価格</dt>
@@ -800,7 +833,7 @@ export function LegalPage({ kind }: { kind: 'terms' | 'privacy' | 'legal' }) {
             </div>
             <div>
               <dt>支払方法・時期</dt>
-              <dd>Stripeを利用したクレジットカード決済。申し込み時に決済します。</dd>
+              <dd>当日会場でお支払いください。申込時のオンライン決済はありません。</dd>
             </div>
             <div>
               <dt>サービス提供時期</dt>
@@ -808,9 +841,7 @@ export function LegalPage({ kind }: { kind: 'terms' | 'privacy' | 'legal' }) {
             </div>
             <div>
               <dt>キャンセル・返金</dt>
-              <dd>
-                開催日時の7日前の同時刻までは全額返金。それ以降の参加者都合のキャンセルは返金対象外。運営都合の中止は全額返金します。お問い合わせフォームからご連絡ください。
-              </dd>
+              <dd>開催2時間前までは申込完了画面からキャンセルできます。それ以降や支払い済みの場合はお問い合わせフォームからご連絡ください。</dd>
             </div>
             <div>
               <dt>受付期限・定員</dt>

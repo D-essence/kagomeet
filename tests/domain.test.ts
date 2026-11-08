@@ -47,7 +47,8 @@ describe('event and applicant validation', () => {
   });
   it('rejects unsafe image URLs, invalid prices and reversed schedule', () => {
     expect(() => eventSchema.parse({ ...event, image: 'javascript:alert(1)' })).toThrow();
-    expect(() => eventSchema.parse({ ...event, malePrice: 0 })).toThrow();
+    expect(() => eventSchema.parse({ ...event, malePrice: -1 })).toThrow();
+    expect(eventSchema.parse({ ...event, malePrice: 0 }).malePrice).toBe(0);
     expect(() => eventSchema.parse({ ...event, endsAt: event.startsAt })).toThrow();
   });
   it('checks age, deadline, visibility and gender-specific capacity', () => {
